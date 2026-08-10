@@ -21,6 +21,21 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Debug - Check environment variables
+        run: |
+          echo "Checking if secrets are loaded..."
+          [ -z "$RAKUTEN_APPLICATION_ID" ] && echo "ERROR: RAKUTEN_APPLICATION_ID is empty" || echo "OK: RAKUTEN_APPLICATION_ID is set"
+          [ -z "$RAKUTEN_ACCESS_KEY" ] && echo "ERROR: RAKUTEN_ACCESS_KEY is empty" || echo "OK: RAKUTEN_ACCESS_KEY is set"
+          [ -z "$RAKUTEN_AFFILIATE_ID" ] && echo "ERROR: RAKUTEN_AFFILIATE_ID is empty" || echo "OK: RAKUTEN_AFFILIATE_ID is set"
+          [ -z "$THREADS_USER_ID" ] && echo "ERROR: THREADS_USER_ID is empty" || echo "OK: THREADS_USER_ID is set"
+          [ -z "$THREADS_ACCESS_TOKEN" ] && echo "ERROR: THREADS_ACCESS_TOKEN is empty" || echo "OK: THREADS_ACCESS_TOKEN is set"
+        env:
+          RAKUTEN_APPLICATION_ID: ${{ secrets.RAKUTEN_APPLICATION_ID }}
+          RAKUTEN_ACCESS_KEY: ${{ secrets.RAKUTEN_ACCESS_KEY }}
+          RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+
       - name: Run daily post
         env:
           RAKUTEN_APPLICATION_ID: ${{ secrets.RAKUTEN_APPLICATION_ID }}
