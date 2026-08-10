@@ -28,6 +28,7 @@ jobs:
           RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          SEARCH_KEYWORDS: 札幌,函館,小樽,釧路,青森,秋田,仙台,山形,福島,東京,横浜,日光,箱根,伊豆,名古屋,金沢,岐阜,松本,熱海,京都,大阪,神戸,奈良,和歌山,広島,岡山,倉敷,高知,香川,愛媛,福岡,佐賀,長崎,熊本,大分,由布院,別府,宮崎,鹿児島,子連れ旅行,温泉宿,グランピング
           TIMEZONE: Asia/Tokyo
           POST_HOUR: 19
         run: npm run start -- --now
