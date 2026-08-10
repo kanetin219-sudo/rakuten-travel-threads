@@ -1,0 +1,29 @@
+{
+  "name": "rakuten-travel-threads",
+  "version": "1.0.0",
+  "description": "Rakuten Travel API integration with Threads auto-posting system",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node index.js --check",
+    "post": "node index.js --now",
+    "dry-run": "node index.js --dry-run",
+    "build:redirects": "node scripts/build-redirects.js"
+  },
+  "keywords": [
+    "rakuten",
+    "travel",
+    "threads",
+    "automation",
+    "affiliate"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dayjs": "^1.11.10",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.2"
+  }
+}
