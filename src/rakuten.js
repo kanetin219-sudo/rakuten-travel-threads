@@ -161,11 +161,14 @@ const searchHotels = async (keyword, options = {}) => {
 
       const statusCode = error.response?.status;
       const errorData = error.response?.data;
+      const errorMessage = error.response?.statusText;
 
       if (statusCode === 401 || statusCode === 403) {
         logger.error('Rakuten API authentication error', {
           statusCode,
-          message: error.message
+          statusText: errorMessage,
+          message: error.message,
+          responseData: errorData
         });
         throw error;
       }
