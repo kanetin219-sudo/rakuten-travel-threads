@@ -102,7 +102,13 @@ const searchHotels = async (keyword, options = {}) => {
       logger.info(`Searching Rakuten Travel: ${keyword} (Coordinates: ${regionCoords.latitude}, ${regionCoords.longitude}) (Retry: ${retryCount}/${MAX_RETRIES})`);
       logger.debug(`API Parameters:`, params);
 
-      const response = await axios.get(RAKUTEN_API_ENDPOINT, { params, timeout: 10000 });
+      const response = await axios.get(RAKUTEN_API_ENDPOINT, {
+        params,
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
 
       logger.debug(`Rakuten API response received for ${keyword}`, { dataKeys: Object.keys(response.data) });
 
