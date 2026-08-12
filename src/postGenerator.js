@@ -1,27 +1,32 @@
 const logger = require('./logger');
 
-const EXCLAMATIONS = [
-  'ママ必見だよ',
-  'これマジ？',
-  'え、この値段？',
-  'ヤバすぎる',
-  'まさかこんな…',
+// Part1のフックテンプレート - クリック欲求を最大化
+const PART1_TEMPLATES = [
+  // 疑問形（続きが気になる）
+  (h) => `マジ？${h.area}でこの値段\nしかも泉質が…🏨`,
+  (h) => `えっ、このホテル\n1人${h.minPrice.toLocaleString('ja-JP')}円？マジで🔗`,
+  (h) => `子どもたちが「また行きたい」\nその理由がヤバい🏨`,
+
+  // 驚き（ギャップ）
+  (h) => `${h.area}で1人${h.minPrice.toLocaleString('ja-JP')}円？\nこれマジなの…🏨`,
+  (h) => `この写真見て\n「えっ、ここ？」ってなった🔗`,
+
+  // 感情訴求（ママ心）
+  (h) => `子どもたちの笑顔がずっと忘れられない\nそのやばい理由↓🏨`,
+  (h) => `ママ友に聞かれまくってる\n${h.area}の神ホテルをチェック👉`,
+
+  // 緊急感
+  (h) => `マジで埋まる前に\n${h.area}のここをチェック必須👇`,
+  (h) => `これかなりやばい\nママたちが選ぶホテルの真実🔗`,
 ];
 
-const CATCHPHRASES = [
-  'しかも子どもたちが喜ぶ設備がいっぱい？？？',
-  'しかも大浴場で家族でリラックス？？？',
-  'しかもキッズに優しい環境だって？？？',
-  'しかも食べ盛り息子たちのお財布が救われる？？？',
-  'しかも温泉でママのストレスも軽減？？？',
-];
-
-const CLOSINGLINES = [
-  'ママのお小遣いからでも行けちゃう😭',
-  'これでファミリー旅行が叶う♡',
-  'GW や夏休み前にチェック必須！',
-  'お子さんたちのはしゃぐ顔が見える…',
-  'リピート確定の価格帯です！',
+// Part2の詳細テンプレート - 納得させる＋CTA（必ず価格を含める）
+const PART2_TEMPLATES = [
+  (h) => `${h.hotelName}\n📍 ${h.area}\n💰 1人${h.minPrice.toLocaleString('ja-JP')}円〜\n\n${h.catchCopy}\n\nチェック必須👇\n#PR\n${h.affiliateUrl}`,
+  (h) => `${h.hotelName}\n📍 ${h.area}\n\n✓ 大浴場で家族リラックス\n✓ 1人${h.minPrice.toLocaleString('ja-JP')}円〜\n\n詳細を見て→\n#PR\n${h.affiliateUrl}`,
+  (h) => `${h.hotelName}\n📍 ${h.area}\n\n料金：1人${h.minPrice.toLocaleString('ja-JP')}円〜\n理由は👇\n#PR\n${h.affiliateUrl}`,
+  (h) => `${h.hotelName}\n📍 ${h.area}\n💰 1人${h.minPrice.toLocaleString('ja-JP')}円〜\n\nママ友の実評価\nチェック→\n#PR\n${h.affiliateUrl}`,
+  (h) => `${h.hotelName}\n📍 ${h.area}\n\n1人${h.minPrice.toLocaleString('ja-JP')}円で\nこれ？ヤバい🔗\n#PR\n${h.affiliateUrl}`,
 ];
 
 const getRandomElement = (array) => {
@@ -34,14 +39,8 @@ const generateThreadsPostPart1 = (hotel) => {
     throw new Error('Invalid hotel data');
   }
 
-  const exclamation = getRandomElement(EXCLAMATIONS);
-  const catchphrase = getRandomElement(CATCHPHRASES);
-
-  let post = `${exclamation}！！！！！\n\n`;
-  post += `${hotel.area}にある ${hotel.hotelName} が\n`;
-  post += `この値段？？？\n\n`;
-  post += `${catchphrase}\n\n`;
-  post += `もっとやばいのが…`;
+  const template = getRandomElement(PART1_TEMPLATES);
+  const post = template(hotel);
 
   logger.info(`Generated thread part 1 (${post.length}/500 chars)`, { hotelName: hotel.hotelName });
 
@@ -54,23 +53,8 @@ const generateThreadsPostPart2 = (hotel) => {
     throw new Error('Invalid hotel data or missing affiliate URL');
   }
 
-  const priceRange = hotel.minPrice && hotel.maxPrice
-    ? `${hotel.minPrice.toLocaleString('ja-JP')}円〜${hotel.maxPrice.toLocaleString('ja-JP')}円`
-    : hotel.minPrice
-      ? `${hotel.minPrice.toLocaleString('ja-JP')}円〜`
-      : '要確認';
-
-  const closingline = getRandomElement(CLOSINGLINES);
-
-  let post = '';
-  post += `${hotel.hotelName}\n\n`;
-  post += `📍 ${hotel.area}\n`;
-  post += `🏘️ ${hotel.catchCopy.substring(0, 30)}...\n\n`;
-  post += `料金帯：1人あたり ${priceRange}\n\n`;
-  post += `${hotel.catchCopy}\n\n`;
-  post += `${closingline}\n\n`;
-  post += `#PR\n\n`;
-  post += `${hotel.affiliateUrl}`;
+  const template = getRandomElement(PART2_TEMPLATES);
+  const post = template(hotel);
 
   logger.info(`Generated thread part 2 (${post.length}/500 chars)`, { hotelName: hotel.hotelName });
 

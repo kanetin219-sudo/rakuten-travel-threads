@@ -2,14 +2,18 @@ require('dotenv').config();
 const logger = require('./src/logger');
 const rakuten = require('./src/rakuten');
 const threads = require('./src/threads');
+const threadsMetrics = require('./src/threadsMetrics');
 const postGenerator = require('./src/postGenerator');
 const storage = require('./src/storage');
 const scheduler = require('./src/scheduler');
+const qualityChecker = require('./src/qualityChecker');
+const { QualityGatekeepersSystem } = require('./src/qualityGatekeepers');
 const { closeBrowser } = require('./src/urlShortener');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 const dayOfYear = require('dayjs/plugin/dayOfYear');
+const { createClient } = require('@supabase/supabase-js');
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -58,9 +62,154 @@ const getEnvironmentVariables = () => {
     SEARCH_KEYWORDS: process.env.SEARCH_KEYWORDS || 'rakuten,travel,hotel',
     TIMEZONE: process.env.TIMEZONE || 'Asia/Tokyo',
     POST_HOUR: parseInt(process.env.POST_HOUR || '19', 10),
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_KEY: process.env.SUPABASE_KEY,
   };
 
   return vars;
+};
+
+// Supabase クライアントを初期化（オプション）
+let supabaseClient = null;
+
+const initSupabase = () => {
+  const env = getEnvironmentVariables();
+
+  if (!env.SUPABASE_URL || !env.SUPABASE_KEY) {
+    logger.warn('Supabase credentials not configured. Metrics will not be saved to database.');
+    return null;
+  }
+
+  try {
+    supabaseClient = createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
+    logger.info('Supabase client initialized successfully');
+    return supabaseClient;
+  } catch (error) {
+    logger.error('Failed to initialize Supabase client', { error: error.message });
+    return null;
+  }
+};
+
+/**
+ * メトリクスデータを Supabase に保存
+ */
+const saveMetricsToSupabase = async (postId, metrics) => {
+  if (!supabaseClient) {
+    logger.warn('Supabase client not initialized. Skipping metrics save.');
+    return null;
+  }
+
+  try {
+    logger.info(`Saving metrics to Supabase for post ${postId}`);
+
+    const { data, error } = await supabaseClient
+      .from('engagement')
+      .upsert([
+        {
+          post_id: postId,
+          like_count: metrics.like_count,
+          comments_count: metrics.comments_count,
+          shares_count: metrics.shares_count,
+          impressions_count: metrics.impressions_count,
+          fetched_at: metrics.fetched_at,
+        },
+      ], { onConflict: 'post_id' });
+
+    if (error) {
+      logger.error('Failed to save metrics to Supabase', {
+        postId,
+        error: error.message,
+      });
+      return null;
+    }
+
+    logger.info(`Metrics saved successfully for post ${postId}`, {
+      likes: metrics.like_count,
+      comments: metrics.comments_count,
+      shares: metrics.shares_count,
+      impressions: metrics.impressions_count,
+    });
+
+    return data;
+  } catch (error) {
+    logger.error('Error saving metrics to Supabase', {
+      postId,
+      error: error.message,
+    });
+    return null;
+  }
+};
+
+/**
+ * ユーザーの全投稿のメトリクスを取得して Supabase に保存
+ */
+const fetchAndSaveAllPostMetrics = async () => {
+  const env = getEnvironmentVariables();
+
+  if (!env.THREADS_USER_ID || !env.THREADS_ACCESS_TOKEN) {
+    logger.error('Threads credentials not configured');
+    return { success: false, error: 'Threads credentials not configured' };
+  }
+
+  try {
+    logger.info('Fetching metrics for all posts...');
+
+    const posts = await threadsMetrics.getUserPostsMetrics(
+      env.THREADS_USER_ID,
+      env.THREADS_ACCESS_TOKEN
+    );
+
+    if (!posts || posts.length === 0) {
+      logger.warn('No posts found');
+      return { success: true, postsCount: 0 };
+    }
+
+    logger.info(`Found ${posts.length} posts to fetch metrics for`);
+
+    let savedCount = 0;
+    const failedPosts = [];
+
+    for (const post of posts) {
+      try {
+        if (supabaseClient) {
+          await saveMetricsToSupabase(post.post_id, post);
+          savedCount += 1;
+        } else {
+          logger.info(`Metrics for post ${post.post_id}:`, {
+            likes: post.like_count,
+            comments: post.comments_count,
+            shares: post.shares_count,
+            impressions: post.impressions_count,
+          });
+          savedCount += 1;
+        }
+      } catch (error) {
+        logger.error(`Failed to process post ${post.post_id}`, {
+          error: error.message,
+        });
+        failedPosts.push(post.post_id);
+      }
+    }
+
+    logger.info(`Metrics fetch completed`, {
+      totalPosts: posts.length,
+      savedCount,
+      failedCount: failedPosts.length,
+    });
+
+    return {
+      success: true,
+      totalPosts: posts.length,
+      savedCount,
+      failedCount: failedPosts.length,
+      failedPosts,
+    };
+  } catch (error) {
+    logger.error('Failed to fetch and save all post metrics', {
+      error: error.message,
+    });
+    return { success: false, error: error.message };
+  }
 };
 
 const getSearchKeywords = () => {
@@ -202,11 +351,17 @@ const runDailyPost = async (options = {}) => {
       part2Chars: postText2.length,
     });
 
+    // 4人の調査員による品質門番チェック
+    const gatekeepersSystem = new QualityGatekeepersSystem();
+    const gatekeeperResult = await gatekeepersSystem.validate(postText1, postText2, selectedHotel);
+
     if (dryRun) {
       logger.info('DRY RUN: Post would be published', {
         hotelName: selectedHotel.hotelName,
         area: selectedHotel.area,
         affiliateUrl: selectedHotel.affiliateUrl,
+        gatekeeperScore: gatekeeperResult.averageScore,
+        gatekeeperPassed: gatekeeperResult.allPassed,
       });
 
       console.log('\n' + '='.repeat(60));
@@ -220,9 +375,54 @@ const runDailyPost = async (options = {}) => {
       console.log('='.repeat(60));
       console.log(`Hotel: ${selectedHotel.hotelName}`);
       console.log(`Area: ${selectedHotel.area}`);
+      console.log('\n🔍 Quality Gatekeepers Audit');
+      console.log('='.repeat(60));
+      console.log(`Total Score: ${gatekeeperResult.averageScore}/${gatekeeperResult.maxScore}`);
+      console.log(`Status: ${gatekeeperResult.allPassed ? '✅ ALL PASSED' : '❌ FAILED'}`);
+      console.log(`Approval: ${gatekeeperResult.summary.passed}/${gatekeeperResult.summary.total} gatekeepers`);
+
+      console.log('\nGatekeeper Results:');
+      gatekeeperResult.gatekeepers.forEach(gk => {
+        console.log(`  ${gk.passed ? '✅' : '❌'} ${gk.gatekeeper}: ${gk.score}/100`);
+      });
+
+      if (gatekeeperResult.summary.allIssues.length > 0) {
+        console.log('\n⚠️ Issues to address:');
+        gatekeeperResult.summary.allIssues.forEach(issue => {
+          console.log(`  • ${issue}`);
+        });
+      }
       console.log('='.repeat(60) + '\n');
 
-      return { success: true, dryRun: true, hotelName: selectedHotel.hotelName };
+      return { success: true, dryRun: true, hotelName: selectedHotel.hotelName, gatekeeperPassed: gatekeeperResult.allPassed };
+    }
+
+    // 4人の調査員全員に合格されないと投稿しない
+    if (!gatekeeperResult.allPassed) {
+      logger.warn(`Post rejected by gatekeepers (${gatekeeperResult.averageScore}/${gatekeeperResult.maxScore})`, {
+        hotelName: selectedHotel.hotelName,
+        failedGatekeepers: gatekeeperResult.summary.failedGatekeepers,
+        issues: gatekeeperResult.summary.allIssues,
+      });
+
+      console.log('\n' + '='.repeat(60));
+      console.log('❌ Quality audit FAILED - Post not published');
+      console.log('='.repeat(60));
+      console.log(`Score: ${gatekeeperResult.averageScore}/${gatekeeperResult.maxScore}`);
+      console.log(`Approval: ${gatekeeperResult.summary.passed}/${gatekeeperResult.summary.total} gatekeepers`);
+
+      console.log('\nRejected by:');
+      gatekeeperResult.summary.failedGatekeepers.forEach(gk => {
+        console.log(`  ❌ ${gk}`);
+      });
+
+      console.log('\n⚠️ Issues that must be fixed:');
+      gatekeeperResult.summary.allIssues.forEach(issue => {
+        console.log(`  • ${issue}`);
+      });
+      console.log('='.repeat(60) + '\n');
+
+      return { success: false, error: 'Gatekeepers rejected post', score: gatekeeperResult.averageScore };
     }
 
     if (!env.THREADS_USER_ID || !env.THREADS_ACCESS_TOKEN) {
@@ -234,20 +434,70 @@ const runDailyPost = async (options = {}) => {
       return { success: false, error: 'Threads credentials not configured' };
     }
 
-    const postId = await threads.postToThreads(
+    // Threads に投稿して Supabase に保存
+    const postResult = await threads.postToThreadsWithSupabase(
       [postText1, postText2],
       env.THREADS_USER_ID,
-      env.THREADS_ACCESS_TOKEN
+      env.THREADS_ACCESS_TOKEN,
+      supabaseClient,
+      {
+        hotelNo: selectedHotel.hotelNo,
+        hotelName: selectedHotel.hotelName,
+        area: selectedHotel.area,
+        minPrice: selectedHotel.minPrice,
+        maxPrice: selectedHotel.maxPrice,
+        catchCopy: selectedHotel.catchCopy,
+        reviewAverage: selectedHotel.reviewAverage,
+        reviewCount: selectedHotel.reviewCount,
+        affiliateUrl: selectedHotel.affiliateUrl,
+      },
+      gatekeeperResult.averageScore
     );
 
+    if (!postResult.success) {
+      logger.error('Failed to post to Threads with Supabase save', {
+        error: postResult.error,
+        hotelName: selectedHotel.hotelName,
+      });
+      return { success: false, error: postResult.error || 'Failed to post to Threads' };
+    }
+
+    const postId = postResult.postId;
     storage.savePostedHotel(selectedHotel.hotelNo, selectedHotel.hotelName);
 
-    logger.success(`Post published successfully`, {
+    logger.success(`Post published successfully (All gatekeepers approved)`, {
       postId,
       hotelName: selectedHotel.hotelName,
       hotelNo: selectedHotel.hotelNo,
       area: selectedHotel.area,
+      gatekeeperScore: gatekeeperResult.averageScore,
     });
+
+    // 投稿後、メトリクスを取得して Supabase に保存
+    try {
+      logger.info('Fetching metrics for newly posted content...');
+      const metrics = await threadsMetrics.getSinglePostMetrics(
+        postId,
+        env.THREADS_ACCESS_TOKEN
+      );
+
+      if (supabaseClient) {
+        await saveMetricsToSupabase(postId, metrics);
+      } else {
+        logger.info('Initial metrics (Supabase not configured):', {
+          postId,
+          likes: metrics.like_count,
+          comments: metrics.comments_count,
+          shares: metrics.shares_count,
+          impressions: metrics.impressions_count,
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to fetch initial metrics for new post', {
+        postId,
+        error: error.message,
+      });
+    }
 
     console.log('\n' + '='.repeat(60));
     console.log('✅ Post published successfully!');
@@ -255,6 +505,8 @@ const runDailyPost = async (options = {}) => {
     console.log(`Post ID: ${postId}`);
     console.log(`Hotel: ${selectedHotel.hotelName}`);
     console.log(`Area: ${selectedHotel.area}`);
+    console.log(`Quality Score: ${gatekeeperResult.averageScore}/${gatekeeperResult.maxScore}`);
+    console.log(`Approval: 4/4 gatekeepers ✅`);
     console.log('='.repeat(60) + '\n');
 
     return {
@@ -262,6 +514,7 @@ const runDailyPost = async (options = {}) => {
       postId,
       hotelName: selectedHotel.hotelName,
       hotelNo: selectedHotel.hotelNo,
+      gatekeeperScore: gatekeeperResult.averageScore,
     };
   } catch (error) {
     logger.error('Daily post execution failed', { error: error.message, stack: error.stack });
@@ -315,6 +568,18 @@ const checkConnectivity = async () => {
     console.log('✅ THREADS_ACCESS_TOKEN configured');
   }
 
+  if (!env.SUPABASE_URL) {
+    console.log('⚠️  SUPABASE_URL not set (optional - needed to save metrics)');
+  } else {
+    console.log('✅ SUPABASE_URL configured');
+  }
+
+  if (!env.SUPABASE_KEY) {
+    console.log('⚠️  SUPABASE_KEY not set (optional - needed to save metrics)');
+  } else {
+    console.log('✅ SUPABASE_KEY configured');
+  }
+
   console.log(`\n📝 Search Keywords: ${getSearchKeywords().join(', ')}`);
   console.log(`📍 Timezone: ${env.TIMEZONE}`);
   console.log(`⏰ Post Hour: ${env.POST_HOUR}:00`);
@@ -358,6 +623,9 @@ const checkConnectivity = async () => {
 };
 
 const main = async () => {
+  // Supabase を初期化
+  initSupabase();
+
   const args = process.argv.slice(2);
 
   if (args.includes('--check')) {
@@ -372,6 +640,29 @@ const main = async () => {
 
   if (args.includes('--dry-run')) {
     const result = await runDailyPost({ dryRun: true });
+    process.exit(result.success ? 0 : 1);
+  }
+
+  if (args.includes('--metrics')) {
+    console.log('\n' + '='.repeat(60));
+    console.log('📊 Fetching Threads Metrics');
+    console.log('='.repeat(60) + '\n');
+
+    const result = await fetchAndSaveAllPostMetrics();
+
+    console.log('\n' + '='.repeat(60));
+    if (result.success) {
+      console.log(`✅ Metrics fetched successfully`);
+      console.log(`   Total posts: ${result.totalPosts}`);
+      console.log(`   Saved: ${result.savedCount}`);
+      if (result.failedCount > 0) {
+        console.log(`   Failed: ${result.failedCount}`);
+      }
+    } else {
+      console.log(`❌ Failed to fetch metrics: ${result.error}`);
+    }
+    console.log('='.repeat(60) + '\n');
+
     process.exit(result.success ? 0 : 1);
   }
 

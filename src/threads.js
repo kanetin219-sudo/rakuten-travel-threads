@@ -1,5 +1,11 @@
 const axios = require('axios');
 const logger = require('./logger');
+const dayjs = require('dayjs');
+const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const GRAPH_API_BASE = 'https://graph.threads.net';
 const MAX_RETRIES = 3;
@@ -272,9 +278,131 @@ const postToThreads = async (textOrArray, threadsUserId, accessToken) => {
   }
 };
 
+/**
+ * Supabase に投稿情報を保存
+ */
+const savePostToSupabase = async (supabaseClient, postData) => {
+  if (!supabaseClient) {
+    logger.warn('Supabase client not provided. Post information will not be saved to database.');
+    return null;
+  }
+
+  try {
+    const {
+      post_id,
+      content,
+      hotel_info,
+      quality_score,
+    } = postData;
+
+    if (!post_id || !content) {
+      logger.error('Missing required post data for Supabase save', {
+        post_id,
+        contentLength: content?.length,
+      });
+      return null;
+    }
+
+    const now = dayjs().tz('Asia/Tokyo').toISOString();
+
+    logger.info(`Saving post to Supabase (post_id: ${post_id})`);
+
+    const { data, error } = await supabaseClient
+      .from('posts')
+      .upsert([
+        {
+          post_id,
+          content,
+          hotel_info: hotel_info || null,
+          created_at: now,
+          posted_at: now,
+          quality_score: quality_score || null,
+        },
+      ], { onConflict: 'post_id' });
+
+    if (error) {
+      logger.error('Failed to save post to Supabase', {
+        postId: post_id,
+        error: error.message,
+        details: error.details,
+      });
+      return null;
+    }
+
+    logger.info(`Post saved successfully to Supabase`, {
+      postId: post_id,
+      qualityScore: quality_score,
+      hotelName: hotel_info?.hotelName || 'N/A',
+    });
+
+    return data;
+  } catch (error) {
+    logger.error('Error saving post to Supabase', {
+      error: error.message,
+      stack: error.stack,
+    });
+    return null;
+  }
+};
+
+/**
+ * Threads に投稿してSupabaseに保存（統合版）
+ */
+const postToThreadsWithSupabase = async (
+  textOrArray,
+  threadsUserId,
+  accessToken,
+  supabaseClient,
+  hotelInfo = null,
+  qualityScore = null
+) => {
+  try {
+    // まず Threads に投稿
+    const rootPostId = await postToThreads(textOrArray, threadsUserId, accessToken);
+
+    if (!rootPostId) {
+      logger.error('Failed to get post ID after posting to Threads');
+      return { success: false, postId: null, error: 'No post ID returned' };
+    }
+
+    // 投稿内容を組み立て（複数パートの場合は結合）
+    let fullContent;
+    if (Array.isArray(textOrArray)) {
+      fullContent = textOrArray.join('\n\n---\n\n');
+    } else {
+      fullContent = textOrArray;
+    }
+
+    // Supabase に保存
+    const supabaseData = {
+      post_id: rootPostId,
+      content: fullContent,
+      hotel_info: hotelInfo,
+      quality_score: qualityScore,
+    };
+
+    const savedData = await savePostToSupabase(supabaseClient, supabaseData);
+
+    return {
+      success: true,
+      postId: rootPostId,
+      saved: savedData !== null,
+      hotelName: hotelInfo?.hotelName || 'N/A',
+    };
+  } catch (error) {
+    logger.error('Failed in postToThreadsWithSupabase', {
+      error: error.message,
+      hotelName: hotelInfo?.hotelName || 'unknown',
+    });
+    return { success: false, postId: null, error: error.message };
+  }
+};
+
 module.exports = {
   createThreadsContainer,
   publishThreadsPost,
   postToThreads,
+  postToThreadsWithSupabase,
   splitTextForThreads,
+  savePostToSupabase,
 };
