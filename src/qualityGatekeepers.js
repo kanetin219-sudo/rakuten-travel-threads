@@ -218,8 +218,9 @@ class DevilsAdvocateGatekeeper {
       issues.push(`${this.name}: 個人情報や不適切な内容が含まれています`);
     }
 
-    // 競合他社を貶してないか
-    checks.noCompetitorBashing = !/(より|比較|〜よりいい|〜なんて|〜は糞)/i.test(part1 + part2);
+    // 競合他社を貶してないか（「より」等の一般語での誤検知を避け、競合への言及＋否定的表現が
+    // 近接する場合のみ検出する）
+    checks.noCompetitorBashing = !/(他社|他のホテル|他の宿|よその(ホテル|宿|旅館)|他と比べ).{0,12}(より|なんて|劣|ダメ|悪|微妙|しょぼ|は糞)/i.test(part1 + part2);
     if (!checks.noCompetitorBashing) {
       issues.push(`${this.name}: 競合他社を貶すような表現があります`);
     }
