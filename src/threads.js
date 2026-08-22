@@ -10,6 +10,9 @@ dayjs.extend(timezone);
 const GRAPH_API_BASE = 'https://graph.threads.net';
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [2000, 5000, 10000];
+// コンテナ作成後、公開までの待機時間。Threads側でコンテナが処理される前に公開すると
+// 「Media Not Found」エラーになるため待つ（高速ネットワーク環境で必須）
+const PUBLISH_DELAY_MS = parseInt(process.env.THREADS_PUBLISH_DELAY_MS) || 10000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -174,6 +177,17 @@ const publishThreadsPost = async (containerId, threadsUserId, accessToken) => {
         throw error;
       }
 
+      // コンテナがまだ準備できていない（Media Not Found）→ 待ってから再試行
+      const subcode = errorData?.error?.error_subcode;
+      if (statusCode === 400 && (subcode === 4279009 || errorData?.error?.code === 24)) {
+        logger.warn(`Container not ready yet (Media Not Found). Waiting before retry...`);
+        if (retryCount < MAX_RETRIES) {
+          const delay = getRetryDelay(retryCount);
+          await sleep(delay);
+          continue;
+        }
+      }
+
       if (statusCode === 429) {
         logger.warn(`Rate limited by Threads API. Retrying...`);
         if (retryCount < MAX_RETRIES) {
@@ -261,6 +275,11 @@ const postToThreads = async (textOrArray, threadsUserId, accessToken) => {
 
       const parentId = i === 0 ? null : rootPostId;
       const containerId = await createThreadsContainer(partText, threadsUserId, accessToken, parentId);
+
+      // コンテナが処理されるまで待機（即公開すると Media Not Found になる）
+      logger.info(`Waiting ${PUBLISH_DELAY_MS}ms for container to be ready before publishing...`);
+      await sleep(PUBLISH_DELAY_MS);
+
       const postId = await publishThreadsPost(containerId, threadsUserId, accessToken);
 
       if (i === 0) {
