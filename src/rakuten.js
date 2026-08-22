@@ -2,7 +2,8 @@ const axios = require('axios');
 const logger = require('./logger');
 const { shortenUrl } = require('./urlShortener');
 
-const RAKUTEN_API_ENDPOINT = 'https://openapi.rakuten.co.jp/engine/api/Travel/SimpleHotelSearch/20260731';
+// 標準・楽天ウェブサービス SimpleHotelSearch（IP制限なし・applicationIdのみで利用可）
+const RAKUTEN_API_ENDPOINT = 'https://app.rakuten.co.jp/services/api/Travel/SimpleHotelSearch/20170426';
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [2000, 5000, 10000];
 
@@ -67,14 +68,14 @@ const getRetryDelay = (retryCount) => RETRY_DELAYS[retryCount] || 10000;
 const searchHotels = async (keyword, options = {}) => {
   const {
     applicationId,
-    accessKey,
     affiliateId,
     hits = 30,
   } = options;
 
-  if (!applicationId || !accessKey || !affiliateId) {
+  // 標準・楽天ウェブサービスAPIは applicationId のみ必須（accessKey不要・affiliateIdは任意）
+  if (!applicationId) {
     logger.error('Missing Rakuten API credentials');
-    throw new Error('RAKUTEN_APPLICATION_ID, RAKUTEN_ACCESS_KEY, or RAKUTEN_AFFILIATE_ID not set');
+    throw new Error('RAKUTEN_APPLICATION_ID not set');
   }
 
   const regionCoords = REGION_MAPPING[keyword];
@@ -85,8 +86,6 @@ const searchHotels = async (keyword, options = {}) => {
 
   const params = {
     applicationId,
-    accessKey,
-    affiliateId,
     latitude: regionCoords.latitude,
     longitude: regionCoords.longitude,
     searchRadius: regionCoords.searchRadius,
@@ -94,6 +93,11 @@ const searchHotels = async (keyword, options = {}) => {
     hits,
     format: 'json'
   };
+
+  // アフィリエイトIDがあればアフィリエイトURLを取得
+  if (affiliateId) {
+    params.affiliateId = affiliateId;
+  }
 
   let lastError;
 
