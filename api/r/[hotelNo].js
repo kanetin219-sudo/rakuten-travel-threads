@@ -1,6 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 
+// アフィリエイトID（Vercel環境変数で上書き可・未設定時は既定値）
+const AFFILIATE_ID = process.env.RAKUTEN_AFFILIATE_ID || '56509bd0.96fbfa96.56509bd1.966450a0';
+
+// リダイレクト表に無いホテルでも、hotelNoからアフィリエイトURLをその場で組み立てる
+// （f_no == hotelNo。楽天トラベルのホテルページを対象にアフィリエイトラッパーで包む）
+function buildAffiliateUrl(hotelNo) {
+  const hotelPage = `https://travel.rakuten.co.jp/HOTEL/${hotelNo}/${hotelNo}.html`;
+  const enc = encodeURIComponent(hotelPage);
+  return `https://hb.afl.rakuten.co.jp/hgc/${AFFILIATE_ID}/?pc=${enc}&m=${enc}`;
+}
+
 let redirectsCache = null;
 
 function loadRedirects() {
@@ -33,17 +44,9 @@ export default function handler(req, res) {
     });
   }
 
-  // 対応表を読み込む
+  // 対応表を読み込む（あれば使い、無ければ hotelNo から組み立てる）
   const redirects = loadRedirects();
-  const targetUrl = redirects[hotelNo];
-
-  if (!targetUrl) {
-    return res.status(404).json({
-      error: 'Hotel not found.',
-      message: '指定されたホテルIDが見つかりません。楽天トラベルからお探しください。',
-      rakutenUrl: 'https://travel.rakuten.co.jp/',
-    });
-  }
+  const targetUrl = redirects[hotelNo] || buildAffiliateUrl(hotelNo);
 
   // 他のクエリパラメータ（pr など）をリダイレクト先URLに追加
   let finalUrl = targetUrl;
